@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+/* Opsional: Styling dasar untuk body */
+body {
+  @apply bg-gray-50 text-gray-900;
+}
