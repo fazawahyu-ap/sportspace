@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { collection, onSnapshot, doc, updateDoc, addDoc, setDoc, getDoc, arrayUnion, query, where, getDocs } from 'firebase/firestore';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, sendPasswordResetEmail } from 'firebase/auth';
 import { db, auth } from './firebaseConfig';
+import Calendar from 'react-calendar';
+import 'react-calendar/dist/Calendar.css';
 
 // --- GENERATOR 15 AVATAR KARAKTER ILUSTRASI ---
 const AVATARS = Array.from({ length: 15 }, (_, i) => `https://api.dicebear.com/7.x/adventurer/svg?seed=SportSpacePemain${i + 1}&backgroundColor=f1f5f9,e0f2fe,dcfce7,ffedd5,fce7f3`);
@@ -42,12 +44,14 @@ function App() {
     nama: '', jenis: 'Futsal', lokasi: '', harga: '', image: '', isMabar: false
   });
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  // --- STATE DETAIL & BOOKING (MVP) ---
   const [selectedField, setSelectedField] = useState(null);
+  const [fieldBookedDates, setFieldBookedDates] = useState({}); // Menyimpan jadwal: { '2026-06-28': ['16:00', '18:00'] }
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [checkoutStep, setCheckoutStep] = useState(1); 
   const [splitCount, setSplitCount] = useState(1);
   const [bookingDate, setBookingDate] = useState('');
-  const [bookingTime, setBookingTime] = useState('18:00');
+  const [bookingTime, setBookingTime] = useState('');
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [checkoutMode, setCheckoutMode] = useState('private'); 
 
@@ -69,6 +73,10 @@ function App() {
     if (jenis?.toLowerCase() === 'badminton') return 4; 
     return 10; 
   };
+
+  // --- FUNGSI RATING DINAMIS (Jika di database belum ada, ambil otomatis berdasarkan ID lapangan) ---
+  const getDynamicRating = (f) => f.rating || (4 + (f.id.charCodeAt(0) % 10) / 10).toFixed(1);
+  const getDynamicReviews = (f) => f.ulasanCount || (f.id.charCodeAt(1) * 3 + 12);
 
   const newsHighlights = [
     { id: 1, title: "Timnas Futsal Indonesia Bersiap Hadapi Piala Asia", category: "Futsal Nasional", date: "Hari Ini", image: "https://images.unsplash.com/photo-1511886929837-354d827aae26?q=80&w=600&auto=format&fit=crop" },
@@ -107,6 +115,16 @@ function App() {
   else if (filterHarga === 'tertinggi') filteredFields.sort((a, b) => b.harga - a.harga);
 
   const liveMatchField = fields.find(f => f.id === selectedMatchFieldId);
+
+  // --- SCROLL TO KATALOG FIX ---
+  const handleNavKatalog = (e) => {
+    e.preventDefault();
+    setActivePage('home');
+    setIsMobileMenuOpen(false);
+    setTimeout(() => {
+      document.getElementById('katalog')?.scrollIntoView({ behavior: 'smooth' });
+    }, 150);
+  };
 
   // --- AUTHENTICATION & PROFILE ---
   const handleAuthSubmit = async (e) => {
@@ -263,16 +281,90 @@ function App() {
     }
   };
 
+  // --- LOGIKA HALAMAN DETAIL (MVP) ---
+  const handleViewDetail = async (lapangan) => {
+    setSelectedField(lapangan);
+    setActivePage('detail');
+    window.scrollTo(0, 0);
+    
+    // Set default ke hari ini
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    setBookingDate(`${year}-${month}-${day}`);
+    setBookingTime(''); 
+    setFieldBookedDates({});
+
+    // Ambil data jadwal dari Firebase untuk mapping Slot Waktu Kalender
+    try {
+      const q = query(collection(db, "bookings"), where("lapanganId", "==", lapangan.id));
+      const snap = await getDocs(q);
+      const booked = {};
+      snap.docs.forEach(doc => {
+        const data = doc.data();
+        if (!booked[data.tanggalMain]) booked[data.tanggalMain] = [];
+        booked[data.tanggalMain].push(data.jamMain);
+      });
+      setFieldBookedDates(booked);
+    } catch (error) {
+      console.error("Gagal load data jadwal", error);
+    }
+  };
+
+  const handleDateChange = (val) => {
+    const offset = val.getTimezoneOffset() * 60000;
+    const adjustedDate = new Date(val.getTime() - offset);
+    setBookingDate(adjustedDate.toISOString().split('T')[0]);
+    setBookingTime(''); 
+  };
+
+  const tileClassName = ({ date, view }) => {
+    if (view === 'month') {
+      const offset = date.getTimezoneOffset() * 60000;
+      const dateString = new Date(date.getTime() - offset).toISOString().split('T')[0];
+      // Jika ke-4 slot waktu (16:00, 18:00, 19:00, 20:00) sudah di-booking, coret merah kalendernya
+      if (fieldBookedDates[dateString] && fieldBookedDates[dateString].length >= 4) {
+        return 'booked-date'; 
+      }
+    }
+    return null;
+  };
+
+  const tileDisabled = ({ date, view }) => {
+    if (view === 'month') {
+      const offset = date.getTimezoneOffset() * 60000;
+      const dateString = new Date(date.getTime() - offset).toISOString().split('T')[0];
+      const today = new Date();
+      const todayString = new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+      
+      if (dateString < todayString) return true; // Disable hari yang sudah lewat
+      if (fieldBookedDates[dateString] && fieldBookedDates[dateString].length >= 4) return true; // Disable jika full
+    }
+    return false;
+  };
+
+
   // --- CHECKOUT FLOW ---
-  const openBookingModal = (lapangan, mode = 'private') => {
+  const openBookingModal = (lapangan = selectedField, mode = 'private') => {
     if (userRole === 'guest') {
       showToast("Login dulu ya untuk booking.", 'error');
       setActivePage('login'); return;
     }
+
+    if (activePage === 'detail') {
+      if (!bookingDate || !bookingTime) {
+        return showToast("Silakan pilih Tanggal dan Jam kosong terlebih dahulu!", "error");
+      }
+    } else {
+      // Jika dari katalog langsung, set default
+      setBookingDate(new Date().toISOString().split('T')[0]);
+      setBookingTime('18:00');
+    }
+
     setSelectedField(lapangan);
     setCheckoutMode(mode);
     setCheckoutStep(1); 
-    setBookingDate(new Date().toISOString().split('T')[0]);
     
     if (mode === 'individu') setSplitCount(getMaxPlayers(lapangan.jenis));
     else if (mode === 'sparing') setSplitCount(2); 
@@ -422,23 +514,37 @@ function App() {
   if (activePage === 'login') {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 relative overflow-hidden">
+        <style>{`
+          @keyframes diagonalMove {
+            from { background-position: 0 0; }
+            to { background-position: 500px 500px; }
+          }
+          .bg-pattern-move {
+            background-image: url('/logo.png');
+            background-size: 100px; /* Ukuran logo kecil-kecil */
+            opacity: 0.08; /* Sangat samar agar tetap elegan */
+            animation: diagonalMove 60s linear infinite; /* Gerakan sangat lambat dan halus */
+          }
+        `}</style>
+        <div className="absolute inset-[-100%] bg-pattern-move pointer-events-none z-0 transform rotate-[15deg]"></div>
+
         <div className="fixed inset-0 pointer-events-none flex items-center justify-center opacity-[0.03] select-none z-0">
           <img src="/logo.png" alt="Watermark" className="w-[120vw] md:w-[45vw] object-contain grayscale" />
         </div>
         {toast.show && (
           <div className={`fixed top-5 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-full font-bold shadow-xl animate-in slide-in-from-top-5 text-sm w-11/12 md:w-auto text-center ${toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-500 text-white'}`}>{toast.message}</div>
         )}
-        <div className="bg-white p-6 md:p-8 rounded-3xl shadow-xl w-full max-w-md text-center border border-slate-100 z-10 relative overflow-hidden">
+        <div className="bg-white/90 backdrop-blur-sm p-6 md:p-8 rounded-3xl shadow-xl w-full max-w-md text-center border border-slate-100 z-10 relative overflow-hidden">
           
           {/* Watermark Logo DI DALAM Kartu Login */}
-          <div className="absolute inset-0 pointer-events-none flex items-center justify-center opacity-[0.04] select-none z-0">
+          <div className="absolute inset-0 pointer-events-none flex items-center justify-center opacity-[0.1] select-none z-0">
             <img src="/logo.png" alt="Watermark" className="w-3/4 object-contain grayscale" />
           </div>
 
           <div className="relative z-10">
             <img src="/logo.png" alt="Logo" className="h-16 w-auto mx-auto mb-4 object-contain" />
             <h2 className="text-2xl font-extrabold text-slate-800 mb-2">{authMode === 'login' ? 'Akses SportSpace' : 'Daftar Akun'}</h2>
-            <p className="text-slate-500 mb-8 text-sm">{authMode === 'login' ? 'Gunakan email kampus/pribadi.' : 'Lengkapi data valid.'}</p>
+            <p className="text-slate-500 mb-8 text-sm">{authMode === 'login' ? 'Gunakan email yang sudah terdaftar di SportSpace.' : 'Lengkapi data valid.'}</p>
             <form onSubmit={handleAuthSubmit} className="flex flex-col gap-4 text-left">
               <div>
                 <label className="block text-xs font-bold text-slate-600 mb-1">Email</label>
@@ -740,6 +846,25 @@ function App() {
           .print-area { position: absolute; left: 0; top: 0; width: 100%; border: none !important; box-shadow: none !important; }
           .no-print { display: none !important; }
         }
+        /* Animasi Bergerak Diagonal untuk Watermark */
+        @keyframes diagonalMove {
+          from { background-position: 0 0; }
+          to { background-position: 500px 500px; }
+        }
+        .bg-pattern-move {
+          background-image: url('/logo.png');
+          background-size: 100px; 
+          opacity: 0.08; 
+          animation: diagonalMove 60s linear infinite; 
+        }
+        /* CSS Untuk React Calendar Custom MVP */
+        .react-calendar { border: none !important; width: 100% !important; background: transparent !important; font-family: inherit !important; }
+        .react-calendar__navigation button { font-weight: 900; font-size: 1.1rem; border-radius: 8px; }
+        .react-calendar__tile { padding: 1em 0.5em !important; font-weight: bold; border-radius: 12px; }
+        .react-calendar__tile--now { background: #eff6ff !important; color: #2563eb; }
+        .react-calendar__tile--active { background: #2563eb !important; color: white !important; }
+        .react-calendar__tile:disabled { background-color: #f1f5f9; color: #cbd5e1; }
+        .booked-date { background: #fee2e2 !important; color: #ef4444 !important; text-decoration: line-through; pointer-events: none; opacity: 0.6; }
       `}</style>
 
       {toast.show && (
@@ -758,7 +883,7 @@ function App() {
           
           <div className="hidden md:flex items-center gap-8 font-bold text-sm text-slate-500">
             <a href="#" onClick={(e) => { e.preventDefault(); setActivePage('home'); window.scrollTo(0,0); }} className={`${activePage === 'home' ? 'text-blue-600' : 'hover:text-blue-600'} transition-colors`}>Beranda</a>
-            <a href="#katalog" onClick={(e) => { e.preventDefault(); setActivePage('home'); setTimeout(() => { window.location.href = '#katalog'; }, 100); }} className="hover:text-blue-600 transition-colors">Katalog Lapangan</a>
+            <a href="#katalog" onClick={handleNavKatalog} className="hover:text-blue-600 transition-colors">Katalog Lapangan</a>
             <a href="#pesanan" onClick={(e) => { e.preventDefault(); fetchUserBookings(); }} className={`${activePage === 'pesanan' ? 'text-blue-600' : 'hover:text-blue-600'} transition-colors`}>Pesanan Saya</a>
             
             {userRole === 'admin' && (
@@ -814,7 +939,7 @@ function App() {
               )}
               
               <a href="#" onClick={(e) => { e.preventDefault(); setIsMobileMenuOpen(false); setActivePage('home'); window.scrollTo(0,0); }} className={`${activePage === 'home' ? 'text-blue-600' : 'hover:text-blue-600'}`}>Beranda</a>
-              <a href="#katalog" onClick={(e) => { e.preventDefault(); setIsMobileMenuOpen(false); setActivePage('home'); setTimeout(() => { window.location.href = '#katalog'; }, 100); }} className="hover:text-blue-600">Katalog Lapangan</a>
+              <a href="#katalog" onClick={handleNavKatalog} className="hover:text-blue-600">Katalog Lapangan</a>
               <a href="#pesanan" onClick={(e) => { e.preventDefault(); fetchUserBookings(); }} className={`${activePage === 'pesanan' ? 'text-blue-600' : 'hover:text-blue-600'}`}>Pesanan Saya</a>
               
               {userRole === 'admin' && (
@@ -833,8 +958,182 @@ function App() {
         )}
       </nav>
 
-      {/* --- HALAMAN PROFIL USER --- */}
-      {activePage === 'profil' ? (
+      {/* ========================================================= */}
+      {/* --- HALAMAN DETAIL LAPANGAN (NEW MVP FEATURE) ---         */}
+      {/* ========================================================= */}
+      {activePage === 'detail' && selectedField ? (
+        <main className="max-w-6xl mx-auto p-4 md:p-6 w-full flex-grow pt-8 pb-20 animate-in fade-in duration-500 relative z-10">
+          
+          <button onClick={handleNavKatalog} className="mb-6 flex items-center gap-2 text-sm font-bold text-slate-500 hover:text-slate-800 transition">
+            ← Kembali ke Katalog
+          </button>
+
+          <div className="bg-white rounded-[40px] shadow-sm border border-slate-200 overflow-hidden">
+            {/* Header / Hero Image Detail */}
+            <div className="h-64 md:h-96 w-full relative">
+              <img src={selectedField.image} alt={selectedField.nama} className="w-full h-full object-cover" />
+              <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/40 to-transparent"></div>
+              <div className="absolute bottom-0 left-0 p-6 md:p-10 w-full flex flex-col md:flex-row md:items-end justify-between gap-4">
+                <div>
+                  <span className="bg-blue-600 text-white px-3 py-1 rounded-lg text-[10px] font-black tracking-widest uppercase mb-3 inline-block shadow-lg">
+                    {selectedField.jenis}
+                  </span>
+                  <h1 className="text-3xl md:text-5xl font-black text-white leading-tight drop-shadow-lg">{selectedField.nama}</h1>
+                  <p className="text-slate-300 font-medium mt-2 text-sm md:text-base flex items-center gap-2">📍 {selectedField.lokasi}</p>
+                </div>
+                <div className="text-left md:text-right">
+                  <div className="flex items-center md:justify-end gap-1 text-yellow-400 mb-1">
+                    <span className="text-2xl">★</span><span className="text-xl font-black text-white">{getDynamicRating(selectedField)}</span>
+                  </div>
+                  <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">({getDynamicReviews(selectedField)} Ulasan Google)</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 md:p-10 grid grid-cols-1 lg:grid-cols-12 gap-10">
+              
+              {/* Kolom Kiri: Peta dan Info */}
+              <div className="lg:col-span-7 space-y-10">
+                
+                {/* Deskripsi & Harga */}
+                <div>
+                  <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4">Informasi Lapangan</h3>
+                  <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 flex justify-between items-center">
+                    <div>
+                      <p className="text-[10px] font-black text-slate-400 uppercase mb-1">TARIF PER JAM</p>
+                      <p className="text-3xl font-black text-blue-600">Rp {selectedField.harga?.toLocaleString()}</p>
+                    </div>
+                    {selectedField.status === 'Tersedia' ? (
+                      <span className="bg-green-100 text-green-700 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest border border-green-200">TERSEDIA</span>
+                    ) : (
+                      <span className="bg-red-100 text-red-600 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest border border-red-200">PENUH / TUTUP</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Integrasi Peta Google Maps (Simulasi API) */}
+                <div>
+                  <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">Lokasi Google Maps</h3>
+                  <div className="w-full h-64 bg-slate-200 rounded-3xl overflow-hidden border-4 border-slate-100 shadow-inner relative">
+                    <iframe 
+                      src={selectedField.embedMap || `https://maps.google.com/maps?q=${encodeURIComponent(selectedField.nama + ' ' + selectedField.lokasi)}&t=&z=15&ie=UTF8&iwloc=&output=embed`}
+                      width="100%" 
+                      height="100%" 
+                      style={{ border: 0 }} 
+                      allowFullScreen="" 
+                      loading="lazy" 
+                      referrerPolicy="no-referrer-when-downgrade"
+                      className="absolute inset-0"
+                    ></iframe>
+                  </div>
+                </div>
+
+                {/* Ulasan (Social Proof) */}
+                <div>
+                  <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">Ulasan Pengunjung</h3>
+                  <div className="space-y-4">
+                    {/* Dummy Reviews untuk MVP */}
+                    <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center font-black text-blue-600 text-xs">B</div>
+                          <div><p className="font-bold text-sm text-slate-800 leading-none">Budi Santoso</p><p className="text-[9px] text-slate-400 mt-1">Local Guide • 1 minggu lalu</p></div>
+                        </div>
+                        <span className="text-yellow-400 text-xs">★★★★★</span>
+                      </div>
+                      <p className="text-sm text-slate-600 mt-3 leading-relaxed">Lapangannya sangat terawat, rumput sintetisnya masih bagus dan empuk. Fasilitas ruang ganti dan kamar mandinya juga bersih. Mantap!</p>
+                    </div>
+
+                    <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center font-black text-red-600 text-xs">A</div>
+                          <div><p className="font-bold text-sm text-slate-800 leading-none">Agus Pratama</p><p className="text-[9px] text-slate-400 mt-1">3 minggu lalu</p></div>
+                        </div>
+                        <span className="text-yellow-400 text-xs">★★★★☆</span>
+                      </div>
+                      <p className="text-sm text-slate-600 mt-3 leading-relaxed">Parkiran luas, akses mudah. Sayang pencahayaan kalau malam agak kurang di pojokan. Selebihnya oke banget buat mabar rutin.</p>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Kolom Kanan: Kalender & Time Slots */}
+              <div className="lg:col-span-5">
+                <div className="sticky top-24 bg-white rounded-3xl border border-slate-200 shadow-xl p-6 md:p-8">
+                  
+                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-2 text-center">Jadwal & Ketersediaan</h3>
+                  <p className="text-xs text-slate-500 text-center mb-6">Pilih tanggal dan jam kosong.</p>
+                  
+                  {/* KALENDER REACT */}
+                  <div className="bg-slate-50 p-4 rounded-3xl border border-slate-100 mb-6">
+                    <Calendar 
+                      onChange={handleDateChange}
+                      value={new Date(bookingDate || Date.now())}
+                      tileDisabled={tileDisabled}
+                      tileClassName={tileClassName}
+                      className="w-full border-0 font-sans text-sm bg-transparent"
+                      minDate={new Date()}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-center gap-4 text-[10px] font-bold text-slate-500 mb-6">
+                    <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-blue-600 inline-block"></span> Terpilih / Hari Ini</div>
+                    <div className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-200 inline-block"></span> Penuh (Coret Merah)</div>
+                  </div>
+
+                  {/* SLOT WAKTU (MVP UPDATE) */}
+                  <div className="mb-8">
+                     <p className="text-xs font-bold text-slate-800 mb-3 text-center uppercase tracking-widest">PILIH JAM MAIN (UNTUK {bookingDate})</p>
+                     <div className="grid grid-cols-4 gap-2">
+                        {["16:00", "18:00", "19:00", "20:00"].map(time => {
+                            // Cek apakah di database tanggal ini dan jam ini sudah di booking
+                            const isBooked = fieldBookedDates[bookingDate]?.includes(time);
+                            const isSelected = bookingTime === time;
+                            return (
+                                <button
+                                   key={time}
+                                   disabled={isBooked}
+                                   onClick={() => setBookingTime(time)}
+                                   className={`py-3 rounded-xl text-xs font-bold transition-all shadow-sm ${isBooked ? 'bg-red-50 text-red-400 line-through cursor-not-allowed border border-red-100' : isSelected ? 'bg-blue-600 text-white shadow-md shadow-blue-200 border border-blue-600' : 'bg-white border border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600'}`}
+                                >
+                                   {time}
+                                </button>
+                            )
+                        })}
+                     </div>
+                  </div>
+
+                  {/* ACTION BUTTONS */}
+                  <div className="space-y-3">
+                    <button 
+                      onClick={() => openBookingModal(selectedField, 'private')} 
+                      disabled={selectedField.status !== 'Tersedia'} 
+                      className={`w-full py-4 text-sm font-black rounded-2xl transition shadow-lg flex items-center justify-center gap-2 ${selectedField.status === 'Tersedia' ? 'bg-slate-900 text-white hover:bg-slate-800 active:scale-95' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+                    >
+                      {selectedField.status === 'Tersedia' ? '🔒 PRIVATE BOOKING' : 'LAPANGAN PENUH'}
+                    </button>
+                    
+                    {selectedField.isMabar && selectedField.status === 'Tersedia' && (
+                      <button 
+                        onClick={() => openMatchmakingModal(selectedField)} 
+                        className="w-full py-4 bg-blue-50 hover:bg-blue-100 text-blue-600 text-sm font-black rounded-2xl transition border border-blue-200 active:scale-95 flex items-center justify-center gap-2"
+                      >
+                        ⚔️ CEK LOBBY MABAR
+                      </button>
+                    )}
+                  </div>
+
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </main>
+
+      ) : activePage === 'profil' ? (
+        /* --- HALAMAN PROFIL USER --- */
         <main className="max-w-xl mx-auto p-4 md:p-6 w-full flex-grow pt-8 md:pt-12 pb-20 animate-in fade-in duration-300 no-print relative z-10">
           <div className="bg-white rounded-3xl shadow-sm border border-slate-200 p-6 md:p-8 relative">
             <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 md:gap-6 mb-8 border-b border-slate-100 pb-8 text-center sm:text-left">
@@ -923,11 +1222,11 @@ function App() {
                   </div>
 
                   <div className="p-5 md:p-6 md:w-2/3 flex flex-col justify-between relative">
-{booking.statusPembayaran.includes('Lunas') && (
-  <button onClick={() => window.print()} className="absolute top-4 right-4 z-20 w-max text-[10px] font-bold bg-slate-800 text-white px-3 py-2 rounded-lg flex items-center gap-1.5 hover:bg-slate-700 transition shadow-md no-print active:scale-95">
-    <span className="text-xs">🖨️</span> Cetak Tiket PDF
-  </button>
-)}
+                    {booking.statusPembayaran.includes('Lunas') && (
+                      <button onClick={() => window.print()} className="absolute top-4 right-4 z-20 w-max text-[10px] font-bold bg-slate-800 text-white px-3 py-2 rounded-lg flex items-center gap-1.5 hover:bg-slate-700 transition shadow-md no-print active:scale-95">
+                        <span className="text-xs">🖨️</span> Cetak Tiket PDF
+                      </button>
+                    )}
 
                     <div>
                       <div className="flex justify-between items-start mt-4 md:mt-0">
@@ -1008,8 +1307,8 @@ function App() {
                 </h1>
                 <p className="text-sm md:text-lg text-slate-300 mb-8 md:mb-10 max-w-lg mx-auto md:mx-0 leading-relaxed drop-shadow-md">Platform eksklusif warga Semarang untuk mengecek jadwal lapangan, patungan bayar (Split Bill), hingga mencari lawan tanding secara real-time.</p>
                 <div className="flex flex-col sm:flex-row gap-3 md:gap-4 justify-center md:justify-start">
-                  <a href="#katalog" className="bg-blue-600 hover:bg-blue-500 text-white px-6 md:px-8 py-3.5 rounded-full font-bold text-xs md:text-sm transition shadow-[0_0_20px_rgba(37,99,235,0.4)] flex items-center justify-center gap-2 relative z-10">🔍 Cari Lapangan</a>
-                  <a href="#katalog" className="bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 text-white px-6 md:px-8 py-3.5 rounded-full font-bold text-xs md:text-sm transition flex items-center justify-center gap-2 relative z-10">⚔️ Cari Lawan Sparing</a>
+                  <a href="#katalog" onClick={handleNavKatalog} className="bg-blue-600 hover:bg-blue-500 text-white px-6 md:px-8 py-3.5 rounded-full font-bold text-xs md:text-sm transition shadow-[0_0_20px_rgba(37,99,235,0.4)] flex items-center justify-center gap-2 relative z-10">🔍 Cari Lapangan</a>
+                  <a href="#katalog" onClick={handleNavKatalog} className="bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 text-white px-6 md:px-8 py-3.5 rounded-full font-bold text-xs md:text-sm transition flex items-center justify-center gap-2 relative z-10">⚔️ Cari Lawan Sparing</a>
                 </div>
               </div>
 
@@ -1172,7 +1471,7 @@ function App() {
                   }
 
                   return (
-                    <div key={field.id} className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden flex flex-col hover:shadow-lg hover:-translate-y-1 transition-all duration-300 group relative z-10">
+                    <div key={field.id} className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden flex flex-col hover:shadow-lg hover:-translate-y-1 transition-all duration-300 group relative z-10 cursor-pointer" onClick={() => handleViewDetail(field)}>
                       <div className="h-40 md:h-44 bg-slate-200 relative overflow-hidden">
                         <img src={field.image || 'https://via.placeholder.com/500'} alt={field.nama} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                         <div className="absolute top-3 right-3"><span className={`px-2 md:px-2.5 py-1 rounded-md text-[9px] md:text-[10px] font-bold shadow-sm backdrop-blur-md ${field.status === 'Tersedia' ? 'bg-green-500/90 text-white' : 'bg-slate-800/90 text-white'}`}>{field.status}</span></div>
@@ -1180,12 +1479,15 @@ function App() {
                       </div>
                       <div className="p-3.5 md:p-4 flex flex-col flex-grow">
                         <div className="mb-3">
-                          <h3 className="text-sm md:text-base font-bold text-slate-800 leading-tight truncate">{field.nama}</h3>
-                          <p className="text-slate-500 text-[9px] md:text-[10px] mt-0.5 md:mt-1 truncate">📍 {field.lokasi}</p>
+                          <h3 className="text-sm md:text-base font-bold text-slate-800 leading-tight truncate group-hover:text-blue-600 transition-colors">{field.nama}</h3>
+                          <div className="flex items-center justify-between mt-1">
+                            <p className="text-slate-500 text-[9px] md:text-[10px] truncate">📍 {field.lokasi}</p>
+                            <p className="text-[9px] font-bold text-yellow-500">⭐ {getDynamicRating(field)}</p>
+                          </div>
                         </div>
 
                         {field.isMabar && field.status === 'Tersedia' && (
-                          <div className="mb-3 md:mb-4 flex items-center justify-between bg-slate-50 p-2 rounded-xl border border-slate-100 transition-colors group-hover:bg-slate-100 relative z-10">
+                          <div className="mb-3 md:mb-4 flex items-center justify-between bg-slate-50 p-2 rounded-xl border border-slate-100 transition-colors group-hover:bg-slate-100 relative z-10" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center gap-1.5 md:gap-2">
                               <div className="w-5 h-5 md:w-6 md:h-6 rounded-full bg-red-100 flex items-center justify-center text-[10px] md:text-xs">⚔️</div>
                               <span className={`text-[9px] md:text-[10px] font-bold ${statusColor}`}>{statusLobbyLabel}</span>
@@ -1196,7 +1498,7 @@ function App() {
                           </div>
                         )}
                         
-                        <div className="mt-auto pt-3 border-t border-slate-100 flex justify-between items-center gap-2 relative z-10">
+                        <div className="mt-auto pt-3 border-t border-slate-100 flex justify-between items-center gap-2 relative z-10" onClick={(e) => e.stopPropagation()}>
                           <div className="truncate">
                             <p className="text-[8px] md:text-[9px] text-slate-400 font-semibold uppercase mb-0.5">Tarif / Jam</p>
                             <p className="font-bold text-xs md:text-sm text-blue-600 truncate">Rp {field.harga ? field.harga.toLocaleString('id-ID') : '0'}</p>
