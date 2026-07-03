@@ -547,7 +547,7 @@ function App() {
             <p className="text-slate-500 mb-8 text-sm">{authMode === 'login' ? 'Gunakan email yang sudah terdaftar di SportSpace.' : 'Lengkapi data valid.'}</p>
             <form onSubmit={handleAuthSubmit} className="flex flex-col gap-4 text-left">
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">Email</label>
+                <label className="block text-xs font-bold text-slate-600 mb-1">Email (Gunakan Email Terdaftar)</label>
                 <input type="email" value={email} onChange={(e)=>setEmail(e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 bg-white/80 text-sm" required/>
               </div>
               <div>
