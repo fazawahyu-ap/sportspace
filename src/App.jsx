@@ -417,7 +417,7 @@ function App() {
   // --- MATCHMAKING LOGIC ---
   const openMatchmakingModal = (lapangan) => {
     if (userRole === 'guest') {
-      showToast("Login dulu ke Lobby Matchmaking!", 'error');
+      showToast("Silahkan login dulu untuk lanjut ke Lobby Matchmaking!", 'error');
       setActivePage('login'); return;
     }
     setSelectedMatchFieldId(lapangan.id);
