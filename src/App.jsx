@@ -1537,15 +1537,15 @@ function App() {
           <div>
             <h4 className="text-white font-bold mb-3 uppercase text-[10px] md:text-xs tracking-wider">Hubungi Kami</h4>
             <ul className="space-y-1.5 md:space-y-2 text-[10px] md:text-xs">
-              <li>📞 WhatsApp: +62 812-3456-7890</li>
-              <li>📧 Email: halo@sportspace.id</li>
-              <li>📍 Gedung D, Udinus, Semarang</li>
+              <li>📞 WhatsApp: +62 813-3150-7990</li>
+              <li>📧 Email: admin@sportspace.id</li>
+              <li>📍 Mangunjiwan Blok F17, Kec. Demak, Kabupaten Demak, Jawa Tengah 59515</li>
             </ul>
           </div>
           <div>
             <h4 className="text-white font-bold mb-3 uppercase text-[10px] md:text-xs tracking-wider">Dikembangkan Oleh</h4>
             <p className="text-[10px] md:text-xs text-slate-300">
-              SportSpace team (faza)
+              SportSpace Team IT Developer (Faza)
             </p>
           </div>
         </div>
