@@ -1442,8 +1442,7 @@ function App() {
             </div>
           </section>
 
-          <main id="katalog" className="bg-slate-50 max-w-6xl mx-auto p-4 md:p-6 w-full flex-grow pt-6 md:pt-8 pb-20 no-print relative z-10">
-            
+<main className="bg-slate-50 max-w-6xl mx-auto p-4 md:p-6 w-full flex-grow pt-6 md:pt-8 pb-20 no-print relative z-10">            
             {/* ====== 1. BANNER STATISTIK ====== */}
             <div className="bg-white rounded-2xl p-6 md:p-8 mb-12 shadow-sm border border-slate-200">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-4 text-center divide-y md:divide-y-0 md:divide-x divide-slate-100">
@@ -1537,10 +1536,10 @@ function App() {
               </div>
             </section>
 
-            <header className="mb-6 md:mb-8 flex flex-col gap-4 md:gap-5 border-b border-slate-200 pb-5 md:pb-6">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-3 md:gap-4">
-                <div>
-                  <h2 className="text-xl md:text-2xl font-extrabold text-slate-800">Katalog & Ketersediaan</h2>
+<header id="katalog" className="scroll-mt-24 mb-6 md:mb-8 flex flex-col gap-4 md:gap-5 border-b border-slate-200 pb-5 md:pb-6">
+  <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-3 md:gap-4">
+    <div>
+      <h2 className="text-xl md:text-2xl font-extrabold text-slate-800">Katalog & Ketersediaan</h2>
                   <p className="text-slate-500 mt-1 text-xs md:text-sm">Daftar lapangan mitra eksklusif SportSpace.</p>
                 </div>
                 <div className="w-full md:w-1/3 relative z-10">
