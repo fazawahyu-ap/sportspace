@@ -1650,7 +1650,7 @@ function App() {
           <div>
             <h4 className="text-white font-bold mb-3 uppercase text-[10px] md:text-xs tracking-wider">Dikembangkan Oleh</h4>
             <p className="text-[10px] md:text-xs text-slate-300">
-              SportSpace Team IT Developer (Faza)
+              Faza (SportSpace Team IT Developer)
             </p>
           </div>
         </div>
