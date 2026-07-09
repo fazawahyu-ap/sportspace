@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { collection, onSnapshot, doc, updateDoc, addDoc, setDoc, getDoc, arrayUnion, query, where, getDocs } from 'firebase/firestore';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, sendPasswordResetEmail } from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, sendPasswordResetEmail, onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from './firebaseConfig';
 import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
@@ -51,9 +51,14 @@ function App() {
   const [checkoutStep, setCheckoutStep] = useState(1); 
   const [splitCount, setSplitCount] = useState(1);
   const [bookingDate, setBookingDate] = useState('');
-  const [bookingTime, setBookingTime] = useState('');
+  const [bookingTime, setBookingTime] = useState('09:00');
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [checkoutMode, setCheckoutMode] = useState('private'); 
+
+  // --- STATE UNTUK ULASAN PENGUNJUNG ---
+  const [reviewText, setReviewText] = useState('');
+  const [reviewRating, setReviewRating] = useState(5);
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
 
   const [isMatchmakingModalOpen, setIsMatchmakingModalOpen] = useState(false);
   const [selectedMatchFieldId, setSelectedMatchFieldId] = useState(null);
@@ -97,6 +102,37 @@ function App() {
       setLoading(false);
     });
     return () => unsubscribe();
+  }, []);
+
+  // --- PENDETEKSI SESI LOGIN (AUTO-LOGIN SAAT REFRESH) ---
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        // Jika ada user yang tersimpan di memori browser, ambil datanya
+        setEmail(user.email);
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        
+        if (userDoc.exists()) {
+          const role = userDoc.data().role || 'user';
+          setUserRole(role);
+          setUserProfile({ 
+            nama: userDoc.data().nama || '', 
+            wa: userDoc.data().wa || '', 
+            avatar: userDoc.data().avatar || AVATARS[0] 
+          });
+          
+          // Arahkan admin ke dashboard, biarkan user biasa di halaman terakhirnya atau home
+          if (role === 'admin') {
+             setActivePage('admin-dashboard');
+          }
+        }
+      } else {
+        // Jika tidak ada memori sesi, pastikan statusnya guest
+        setUserRole('guest');
+      }
+    });
+
+    return () => unsubscribeAuth();
   }, []);
 
   const uniqueKategori = ['Semua', ...new Set(fields.map(f => f.jenis).filter(Boolean))];
@@ -411,6 +447,45 @@ function App() {
     } catch (error) {
       setIsProcessingPayment(false);
       showToast("Terjadi kesalahan sistem.", 'error');
+    }
+  };
+
+  // --- FUNGSI KIRIM ULASAN ---
+  const submitReview = async (e) => {
+    e.preventDefault();
+    if (userRole === 'guest') return showToast("Silakan login untuk memberi ulasan.", "error");
+    if (!reviewText.trim()) return showToast("Ulasan tidak boleh kosong!", "error");
+
+    setIsSubmittingReview(true);
+    try {
+      const fieldRef = doc(db, "lapangan", selectedField.id);
+      const newReview = {
+        nama: userProfile.nama || email.split('@')[0],
+        avatar: userProfile.avatar || AVATARS[0],
+        rating: Number(reviewRating),
+        teks: reviewText,
+        tanggal: new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
+      };
+
+      // Simpan ulasan ke array "komentar" di database lapangan ini
+      await updateDoc(fieldRef, {
+        komentar: arrayUnion(newReview)
+      });
+
+      showToast("Ulasan berhasil ditambahkan!", "success");
+      setReviewText('');
+      setReviewRating(5);
+      
+      // Update tampilan secara instan tanpa harus refresh
+      setSelectedField(prev => ({
+        ...prev,
+        komentar: [...(prev.komentar || []), newReview]
+      }));
+
+    } catch (error) {
+      showToast("Gagal mengirim ulasan.", "error");
+    } finally {
+      setIsSubmittingReview(false);
     }
   };
 
@@ -1029,31 +1104,63 @@ function App() {
                 </div>
 
                 {/* Ulasan (Social Proof) */}
+{/* Ulasan (Social Proof Dinamis) */}
                 <div>
                   <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">Ulasan Pengunjung</h3>
-                  <div className="space-y-4">
-                    {/* Dummy Reviews untuk MVP */}
-                    <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
-                      <div className="flex justify-between items-start mb-2">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center font-black text-blue-600 text-xs">B</div>
-                          <div><p className="font-bold text-sm text-slate-800 leading-none">Budi Santoso</p><p className="text-[9px] text-slate-400 mt-1">Local Guide • 1 minggu lalu</p></div>
+                  
+                  {/* Form Tambah Ulasan */}
+                  {userRole !== 'guest' ? (
+                    <form onSubmit={submitReview} className="mb-6 bg-slate-50 p-5 rounded-3xl border border-slate-100 shadow-inner">
+                      <div className="flex items-center gap-3 mb-4">
+                        <img src={userProfile.avatar} className="w-10 h-10 rounded-full border border-slate-200 bg-white" />
+                        <div className="flex flex-col">
+                          <span className="text-xs font-bold text-slate-700">Beri Ulasan Kamu</span>
+                          <div className="flex gap-1 mt-0.5">
+                            {[1, 2, 3, 4, 5].map(star => (
+                              <button type="button" key={star} onClick={() => setReviewRating(star)} className={`text-lg leading-none outline-none ${reviewRating >= star ? 'text-yellow-400 drop-shadow-sm' : 'text-slate-300'}`}>
+                                ★
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                        <span className="text-yellow-400 text-xs">★★★★★</span>
                       </div>
-                      <p className="text-sm text-slate-600 mt-3 leading-relaxed">Lapangannya sangat terawat, rumput sintetisnya masih bagus dan empuk. Fasilitas ruang ganti dan kamar mandinya juga bersih. Mantap!</p>
+                      <textarea value={reviewText} onChange={(e) => setReviewText(e.target.value)} placeholder="Tulis pengalaman bermainmu di sini..." className="w-full text-xs p-4 rounded-2xl border border-slate-200 focus:ring-blue-500 mb-3 resize-none h-24 font-medium" required></textarea>
+                      <button type="submit" disabled={isSubmittingReview} className="w-full py-3 bg-blue-600 text-white text-xs font-black rounded-xl hover:bg-blue-700 shadow-md transition active:scale-95">
+                        {isSubmittingReview ? 'MENGIRIM...' : 'KIRIM ULASAN SEKARANG'}
+                      </button>
+                    </form>
+                  ) : (
+                    <div className="mb-6 bg-blue-50 p-4 rounded-2xl border border-blue-100 text-center">
+                      <p className="text-xs font-bold text-blue-800">Harap masuk (Login) untuk memberikan ulasan lapangan.</p>
                     </div>
+                  )}
 
-                    <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
-                      <div className="flex justify-between items-start mb-2">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center font-black text-red-600 text-xs">A</div>
-                          <div><p className="font-bold text-sm text-slate-800 leading-none">Agus Pratama</p><p className="text-[9px] text-slate-400 mt-1">3 minggu lalu</p></div>
+                  {/* Daftar Ulasan dari Database */}
+                  <div className="space-y-4 max-h-[350px] overflow-y-auto hide-scrollbar pb-4">
+                    {selectedField.komentar && selectedField.komentar.length > 0 ? (
+                      selectedField.komentar.slice().reverse().map((review, idx) => (
+                        <div key={idx} className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm transition hover:shadow-md">
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full overflow-hidden bg-slate-100 border border-slate-200">
+                                <img src={review.avatar} className="w-full h-full object-cover" />
+                              </div>
+                              <div>
+                                <p className="font-bold text-sm text-slate-800 leading-none">{review.nama}</p>
+                                <p className="text-[9px] text-slate-400 mt-1">{review.tanggal}</p>
+                              </div>
+                            </div>
+                            <span className="text-yellow-400 text-xs">{"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}</span>
+                          </div>
+                          <p className="text-sm text-slate-600 mt-3 leading-relaxed font-medium">{review.teks}</p>
                         </div>
-                        <span className="text-yellow-400 text-xs">★★★★☆</span>
+                      ))
+                    ) : (
+                      <div className="text-center p-8 border-2 border-dashed border-slate-200 rounded-3xl">
+                        <span className="text-3xl mb-2 block opacity-50">✍️</span>
+                        <p className="text-xs font-bold text-slate-400">Belum ada ulasan. Jadilah yang pertama memberikan ulasan!</p>
                       </div>
-                      <p className="text-sm text-slate-600 mt-3 leading-relaxed">Parkiran luas, akses mudah. Sayang pencahayaan kalau malam agak kurang di pojokan. Selebihnya oke banget buat mabar rutin.</p>
-                    </div>
+                    )}
                   </div>
                 </div>
 
@@ -1087,8 +1194,7 @@ function App() {
                   <div className="mb-8">
                      <p className="text-xs font-bold text-slate-800 mb-3 text-center uppercase tracking-widest">PILIH JAM MAIN (UNTUK {bookingDate})</p>
                      <div className="grid grid-cols-4 gap-2">
-                        {["16:00", "18:00", "19:00", "20:00"].map(time => {
-                            // Cek apakah di database tanggal ini dan jam ini sudah di booking
+{["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00"].map(time => {                            // Cek apakah di database tanggal ini dan jam ini sudah di booking
                             const isBooked = fieldBookedDates[bookingDate]?.includes(time);
                             const isSelected = bookingTime === time;
                             return (
@@ -1602,10 +1708,20 @@ function App() {
                     <div>
                       <label className="block text-[10px] md:text-xs font-bold text-slate-500 mb-1">Pilih Jam</label>
                       <select value={bookingTime} onChange={(e)=>setBookingTime(e.target.value)} className="w-full px-2 md:px-3 py-2 rounded-lg md:rounded-xl border border-slate-200 focus:ring-blue-500 text-xs md:text-sm font-bold text-slate-700 bg-slate-50 cursor-pointer">
-                        <option value="16:00">16:00 - 17:00</option>
-                        <option value="18:00">18:00 - 19:00</option>
-                        <option value="19:00">19:00 - 20:00</option>
-                        <option value="20:00">20:00 - 21:00</option>
+<option value="09:00">09:00 - 10:00</option>
+<option value="10:00">10:00 - 11:00</option>
+<option value="11:00">11:00 - 12:00</option>
+<option value="12:00">12:00 - 13:00</option>
+<option value="13:00">13:00 - 14:00</option>
+<option value="14:00">14:00 - 15:00</option>
+<option value="15:00">15:00 - 16:00</option>
+<option value="16:00">16:00 - 17:00</option>
+<option value="17:00">17:00 - 18:00</option>
+<option value="18:00">18:00 - 19:00</option>
+<option value="19:00">19:00 - 20:00</option>
+<option value="20:00">20:00 - 21:00</option>
+<option value="21:00">21:00 - 22:00</option>
+<option value="22:00">22:00 - 23:00</option>
                       </select>
                     </div>
                   </div>
